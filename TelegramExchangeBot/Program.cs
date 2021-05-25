@@ -51,6 +51,7 @@ namespace TelegramExchangeBot
 
         private static async Task SendCandleInfo(IExchangeAPI api)
         {
+            //I couldn't find a web socket for candles, so I just check for changes over and over again 
             var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
             var lastMsg = "";
             while (true)
@@ -161,6 +162,7 @@ namespace TelegramExchangeBot
                 }
                 else
                 {
+                    //for quick setup
                     var info = e.Message.Text.Split();
                     exchange = info[0].ToLower();
                     symbol = info[2].ToLower();
