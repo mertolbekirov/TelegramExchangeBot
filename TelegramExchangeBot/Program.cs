@@ -68,7 +68,14 @@ namespace TelegramExchangeBot
                     {
                         timeInterval = splitMsg[4];
                     }
-                    Task.Run(() => StartBot(message.Chat.Id, exchangeName, globalSymbol, infoType, timeInterval));
+                    try
+                    {
+                        Task.Run(() => StartBot(message.Chat.Id, exchangeName, globalSymbol, infoType, timeInterval));
+                    }
+                    catch (Exception)
+                    {
+                        Bot.SendTextMessageAsync(message.Chat.Id, "Something went wrong. Maybe you put the wrong globaly symbol?");
+                    }
                     break;
             }
 
