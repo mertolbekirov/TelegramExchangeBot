@@ -56,7 +56,7 @@ namespace TelegramExchangeBot
                         "Time interval must be standard for candles (30m, 1h, 1d, etc.)\n");
                     break;
                 default:
-                    if (splitMsg.Length < 4 || splitMsg.Length > 5) 
+                    if (splitMsg.Length < 4 || splitMsg.Length > 5)
                     {
                         return;
                     }
@@ -68,18 +68,18 @@ namespace TelegramExchangeBot
                     {
                         timeInterval = splitMsg[4];
                     }
-                    Task.Run(() =>StartBot(message.Chat.Id, exchangeName, globalSymbol, infoType, timeInterval));
+                    Task.Run(() => StartBot(message.Chat.Id, exchangeName, globalSymbol, infoType, timeInterval));
                     break;
             }
 
-          
+
         }
 
         private static async Task StartBot(long chatId, string exchangeName, string globalSymbol, string infoType, string timeInterval)
         {
             var exchangetype = GetExchangeType(exchangeName.ToLower());
             var api = ExchangeAPI.GetExchangeAPI(exchangetype);
-            
+
             if (infoType.ToLower().Contains("trade"))
             {
                 var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
@@ -97,9 +97,51 @@ namespace TelegramExchangeBot
             }
             else if (infoType.ToLower().Contains("candle"))
             {
-                
+
+                int timeIntervalMinutes = GetTimeIntervalMinutes(timeInterval);
+                //I couldn't find a web socket for candles, so I just check for changes over and over again 
+                var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
+                var lastMsg = "";
+                while (true)
+                {
+                    var candles = await api.GetCandlesAsync(globalSymbol, timeIntervalMinutes * 60, DateTime.Now - TimeSpan.FromMinutes(timeIntervalMinutes));
+                    var candle = candles.FirstOrDefault();
+                    if (candle != null)
+                    {
+                        var currMsg = $"{exchangeName.ToUpper()} {globalSymbol} {infoType} {timeInterval}\n" +
+                            $"High Price: {candle.HighPrice:f2}\n" +
+                            $"Base Volume: {candle.BaseCurrencyVolume:f2}\n" +
+                            $"Quote Volume: {candle.QuoteCurrencyVolume:f2}";
+                        if (lastMsg == currMsg)
+                        {
+                            continue;
+                        }
+                        await Bot.EditMessageTextAsync(chatId, msg.MessageId, currMsg);
+                        lastMsg = currMsg;
+                    }
+                }
             }
+
         }
 
+        private static int GetTimeIntervalMinutes(string timeInterval)
+        {
+            if (timeInterval.Contains('m'))
+            {
+                 return int.Parse(timeInterval.Split('m')[0]);
+            }
+            else if (timeInterval.Contains('h'))
+            {
+                return int.Parse(timeInterval.Split('h')[0]) * 60;
+            }
+            else if (timeInterval.Contains('d'))
+            {
+                return int.Parse(timeInterval.Split('d')[0]) * 1440;
+            }
+            else
+            {
+                return 0;
+            }
+        }
     }
 }
