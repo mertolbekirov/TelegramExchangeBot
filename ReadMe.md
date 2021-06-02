@@ -4,4 +4,4 @@
 2. https://github.com/jjxtra/ExchangeSharp/tree/master
 
 
-Command sample (quickest test setup): binance candle BTCUSDT
+Example setup: /setup binance BTCUSDT trade ; /setup binance BTCUSDT candle 30m
