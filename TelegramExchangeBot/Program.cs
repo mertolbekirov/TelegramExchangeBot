@@ -94,7 +94,7 @@ namespace TelegramExchangeBot
                 {
                     string[] info = message.Value.ToString().Split(',').ToArray();
                     Bot.EditMessageTextAsync(chatId, msg.MessageId, $"Trade {exchangeName.ToUpper()} {message.Key}\n" +
-                        $"Time: {info[0]}\n" +
+                        $"Time: {info[0].Split('T')[1]}\n" +
                         $"Price: {info[1].Split(':')[1]}\n" +
                         $"Amount: {info[2].Split(':')[1]}\n" +
                         $"Action: {info[3]}\n");
