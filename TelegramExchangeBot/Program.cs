@@ -24,23 +24,7 @@ namespace TelegramExchangeBot
             Console.ReadLine();
         }
 
-        private static Type GetExchangeType(string exchange)
-        {
-            Type type;
-            if (exchange == "binance")
-            {
-                type = typeof(ExchangeBinanceAPI);
-            }
-            else
-            {
-                type = typeof(ExchangeKrakenAPI);
-            }
-
-            return type;
-        }
-
-
-        private static void Bot_OnMessage(object sender, MessageEventArgs e)
+        private static async void Bot_OnMessage(object sender, MessageEventArgs e)
         {
             var message = e.Message;
             if (message == null || message.Type != MessageType.Text)
@@ -50,7 +34,7 @@ namespace TelegramExchangeBot
             switch (splitMsg.First())
             {
                 case "/start":
-                    Bot.SendTextMessageAsync(e.Message.Chat.Id, "Hi, good to see you! Here is how to set me up:\n" +
+                    await Bot.SendTextMessageAsync(e.Message.Chat.Id, "Hi, good to see you! Here is how to set me up:\n" +
                         "You write /setup {exchange name} {global symbol} {trade/candle} {time interval (only for candles)\n" +
                         "Notes: exchange name can be either Binance or Kraken\n" +
                         "Time interval must be standard for candles (30m, 1h, 1d, etc.)\n");
@@ -68,67 +52,104 @@ namespace TelegramExchangeBot
                     {
                         timeInterval = splitMsg[4];
                     }
+
+                    //wrap in a try catch because unexpected errors might occur, we dont want the program to stop.
                     try
                     {
-                        Task.Run(() => StartBot(message.Chat.Id, exchangeName, globalSymbol, infoType, timeInterval));
+                        await Task.Run(() => StartBot(message.Chat.Id, exchangeName, globalSymbol, infoType, timeInterval));
                     }
                     catch (Exception)
                     {
-                        Bot.SendTextMessageAsync(message.Chat.Id, "Something went wrong. Maybe you put the wrong globaly symbol?");
+                        await Bot.SendTextMessageAsync(message.Chat.Id, "Something went wrong. Maybe you put the wrong globaly symbol?");
                     }
                     break;
             }
-
-
         }
 
         private static async Task StartBot(long chatId, string exchangeName, string globalSymbol, string infoType, string timeInterval)
         {
+            //set api
             var exchangetype = GetExchangeType(exchangeName.ToLower());
             var api = ExchangeAPI.GetExchangeAPI(exchangetype);
 
             if (infoType.ToLower().Contains("trade"))
             {
-                var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
-                var socket = await api.GetTradesWebSocketAsync(message =>
-                {
-                    string[] info = message.Value.ToString().Split(',').ToArray();
-                    Bot.EditMessageTextAsync(chatId, msg.MessageId, $"Trade {exchangeName.ToUpper()} {message.Key}\n" +
-                        $"Time: {info[0].Split('T')[1]}\n" +
-                        $"Price: {info[1].Split(':')[1]}\n" +
-                        $"Amount: {info[2].Split(':')[1]}\n" +
-                        $"Action: {info[3]}\n");
-                    return Task.CompletedTask;
-                }, globalSymbol
-                );
+                await DisplayTradeInfo(chatId, exchangeName, globalSymbol, api);
             }
             else if (infoType.ToLower().Contains("candle"))
             {
-
-                int timeIntervalMinutes = GetTimeIntervalMinutes(timeInterval);
-                //I couldn't find a web socket for candles, so I just check for changes over and over again 
-                var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
-                var lastMsg = "";
-                while (true)
-                {
-                    var candles = await api.GetCandlesAsync(globalSymbol, timeIntervalMinutes * 60, DateTime.Now - TimeSpan.FromMinutes(timeIntervalMinutes));
-                    var candle = candles.FirstOrDefault();
-                    if (candle != null)
-                    {
-                        var currMsg = $"{exchangeName.ToUpper()} {globalSymbol} {infoType} {timeInterval}\n" +
-                            $"High Price: {candle.HighPrice:f2}\n" +
-                            $"Base Volume: {candle.BaseCurrencyVolume:f2}\n" +
-                            $"Quote Volume: {candle.QuoteCurrencyVolume:f2}";
-                        if (lastMsg == currMsg)
-                        {
-                            continue;
-                        }
-                        await Bot.EditMessageTextAsync(chatId, msg.MessageId, currMsg);
-                        lastMsg = currMsg;
-                    }
-                }
+                await DisplayCandleInfo(chatId, exchangeName, globalSymbol, infoType, timeInterval, api);
             }
+        }
 
+        private static async Task DisplayCandleInfo(long chatId, string exchangeName, string globalSymbol, string infoType, string timeInterval, IExchangeAPI api)
+        {
+            //get the candle info until now
+            int timeIntervalMinutes = GetTimeIntervalMinutes(timeInterval);
+            var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
+            var candles = await api.GetCandlesAsync(globalSymbol, timeIntervalMinutes * 60, DateTime.Now - TimeSpan.FromMinutes(timeIntervalMinutes));
+            var candle = candles.FirstOrDefault();
+
+            if (candle != null)
+            {
+                //keep the current info about the candle here
+                var highPrice = candle.HighPrice;
+                var lowPrice = candle.LowPrice;
+                decimal baseVolume = (decimal)candle.BaseCurrencyVolume;
+                decimal quoteVolume = (decimal)candle.QuoteCurrencyVolume;
+                Console.WriteLine(candle.Timestamp);
+                //for each trade, we change the candle info accordingly
+                var socket = await api.GetTradesWebSocketAsync(async trade =>
+                {
+                    //if the current candle is not the latest one, edit the message and stop updating the message
+                    if (DateTime.UtcNow - candle.Timestamp >= TimeSpan.FromMinutes(timeIntervalMinutes))
+                    {
+                        await Bot.EditMessageTextAsync(chatId, msg.MessageId, "The candle is no longer the latest one, canceling the updates :)");
+                        return;
+                    }
+
+                    //otherwise, we continue with the normal flow 
+                    var tradePrice = trade.Value.Price;
+                    
+                    //set new high/low price if it's new
+                    if (highPrice < tradePrice)
+                    {
+                        highPrice = tradePrice;
+                    }
+                    else if (lowPrice > tradePrice)
+                    {
+                        lowPrice = tradePrice;
+                    }
+
+                    //add corresponding values to base/quote volumes
+                    baseVolume += trade.Value.Amount;
+                    quoteVolume += tradePrice * trade.Value.Amount;
+
+                    var currMsg = $"{exchangeName.ToUpper()} {globalSymbol} {infoType} {timeInterval}\n" +
+                       $"High Price: {highPrice:f2}\n" +
+                       $"Low Price: {lowPrice:f2}\n" +
+                       $"Base Volume: {baseVolume:f2}\n" +
+                       $"Quote Volume: {quoteVolume:f2}\n";
+                    //send new msg
+                    await Bot.EditMessageTextAsync(chatId, msg.MessageId, currMsg);
+                }, globalSymbol
+                );
+            }
+        }
+
+        private static async Task DisplayTradeInfo(long chatId, string exchangeName, string globalSymbol, IExchangeAPI api)
+        {
+            var msg = await Bot.SendTextMessageAsync(chatId, "Loading...");
+            var socket = await api.GetTradesWebSocketAsync(async message =>
+            {
+                string[] info = message.Value.ToString().Split(',').ToArray();
+                await Bot.EditMessageTextAsync(chatId, msg.MessageId, $"Trade {exchangeName.ToUpper()} {message.Key}\n" +
+                    $"Time: {info[0].Split('T')[1]}\n" +
+                    $"Price: {info[1].Split(':')[1]}\n" +
+                    $"Amount: {info[2].Split(':')[1]}\n" +
+                    $"Action: {info[3]}\n");
+            }, globalSymbol
+            );
         }
 
         private static int GetTimeIntervalMinutes(string timeInterval)
@@ -149,6 +170,21 @@ namespace TelegramExchangeBot
             {
                 return 0;
             }
+        }
+
+        private static Type GetExchangeType(string exchange)
+        {
+            Type type;
+            if (exchange == "binance")
+            {
+                type = typeof(ExchangeBinanceAPI);
+            }
+            else
+            {
+                type = typeof(ExchangeKrakenAPI);
+            }
+
+            return type;
         }
     }
 }
